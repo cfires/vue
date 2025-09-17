@@ -1,6 +1,6 @@
 {
   "name": "@jnslkj/vue",
-  "version": "2.7.16",
+  "version": "2.7.17",
   "packageManager": "pnpm@8.9.2",
   "description": "Derived from Vue (official: https://github.com/vuejs/vue) - Reactive, component-oriented view layer for modern web interfaces, with fixed ReDos vulnerability.",
   "main": "dist/vue.runtime.common.js",

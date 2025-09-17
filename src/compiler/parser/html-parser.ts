@@ -16,12 +16,14 @@ import { ASTAttr, CompilerOptions } from 'types/compiler'
 
 // Regular Expressions for parsing tags and attributes
 // const attribute =  /^\s*([^\s"'<>\/=]+)(?:\s*(=)\s*(?:"([^"]*)"+|'([^']*)'+|([^\s"'=<>`]+)))?/
-// 修复属性匹配正则表达式, 避免回溯，防止超长属性值时正则运算时间过长
+// 【修复1】修复属性匹配正则表达式, 避免回溯，防止超长属性值时正则运算时间过长
 const attribute =
-  /^\s*([^\s"'<>\/=]+)(?:\s*(=)\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/
+  /^\s*([^\s"'<>\/=]+)(?:\s*(=)\s*(?:"([^"]{0,1000})"|'([^']{0,1000})'|([^\s"'=<>`]+)))?/
 
+// 【修复2】限制动态属性值的最大长度
 const dynamicArgAttribute =
-  /^\s*((?:v-[\w-]+:|@|:|#)\[[^=]+?\][^\s"'<>\/=]*)(?:\s*(=)\s*(?:"([^"]*)"+|'([^']*)'+|([^\s"'=<>`]+)))?/
+  /^\s*((?:v-[\w-]+:|@|:|#)\[[^=]+?\][^\s"'<>\/=]*)(?:\s*(=)\s*(?:"([^"]{0,1000})"|'([^']{0,1000})'|([^\s"'=<>`]+)))?/
+
 const ncname = `[a-zA-Z_][\\-\\.0-9_a-zA-Z${unicodeRegExp.source}]*`
 const qnameCapture = `((?:${ncname}\\:)?${ncname})`
 const startTagOpen = new RegExp(`^<${qnameCapture}`)
@@ -35,8 +37,11 @@ const conditionalComment = /^<!\[/
 // Special Elements (can contain anything)
 export const isPlainTextElement = makeMap('script,style,textarea', true)
 const reCache = {}
-// 新增：标签内容最大长度限制（防止超长输入）
-const MAX_TAG_CONTENT_LENGTH = 10000
+
+// 【修复3】新增安全限制参数
+const MAX_TAG_CONTENT_LENGTH = 10000  // 标签内容最大长度限制
+const MAX_ATTR_VALUE_LENGTH = 1000    // 属性值最大长度限制
+const MAX_PARSING_TIME = 5000         // 最大解析时间(ms)
 
 const decodingMap = {
   '&lt;': '<',
@@ -56,6 +61,10 @@ const shouldIgnoreFirstNewline = (tag, html) =>
   tag && isIgnoreNewlineTag(tag) && html[0] === '\n'
 
 function decodeAttr(value, shouldDecodeNewlines) {
+  // 【修复4】限制解码值的长度
+  if (value.length > MAX_ATTR_VALUE_LENGTH) {
+    value = value.substring(0, MAX_ATTR_VALUE_LENGTH)
+  }
   const re = shouldDecodeNewlines ? encodedAttrWithNewLines : encodedAttr
   return value.replace(re, match => decodingMap[match])
 }
@@ -80,7 +89,17 @@ export function parseHTML(html, options: HTMLParserOptions) {
   const canBeLeftOpenTag = options.canBeLeftOpenTag || no
   let index = 0
   let last, lastTag
+
+  // 【修复5】添加解析超时检测
+  const startTime = Date.now()
+  const checkTimeout = () => {
+    if (Date.now() - startTime > MAX_PARSING_TIME) {
+      throw new Error(`HTML parsing exceeded time limit of ${MAX_PARSING_TIME}ms`)
+    }
+  }
+
   while (html) {
+    checkTimeout()
     last = html
     // Make sure we're not in a plaintext content element like script/style
     if (!lastTag || !isPlainTextElement(lastTag)) {
@@ -163,6 +182,16 @@ export function parseHTML(html, options: HTMLParserOptions) {
       }
 
       if (text) {
+        // 【修复6】限制文本内容长度
+        if (text.length > MAX_TAG_CONTENT_LENGTH) {
+          text = text.substring(0, MAX_TAG_CONTENT_LENGTH)
+          if (__DEV__ && options.warn) {
+            options.warn(
+              `Text content exceeds ${MAX_TAG_CONTENT_LENGTH} characters, truncated to prevent ReDoS`,
+              { start: index, end: index + text.length }
+            )
+          }
+        }
         advance(text.length)
       }
 
@@ -170,7 +199,7 @@ export function parseHTML(html, options: HTMLParserOptions) {
         options.chars(text, index - text.length, index)
       }
     } else {
-      // 【修复2：处理script/style/textarea时，先检查长度，超过限制直接截断】
+      // 【修复7】处理script/style/textarea时，先检查长度，超过限制直接截断
       if (html.length > MAX_TAG_CONTENT_LENGTH) {
         // 超长时触发警告（仅开发环境）
         if (__DEV__ && options.warn) {
@@ -184,15 +213,15 @@ export function parseHTML(html, options: HTMLParserOptions) {
       }
       let endTagLength = 0
       const stackedTag = lastTag.toLowerCase()
-      // 【修复3：优化正则，使用非贪婪匹配+明确结束符，避免回溯】
+      // 【修复8】优化正则，使用非贪婪匹配+明确结束符，避免回溯
       const reStackedTag =
         reCache[stackedTag] ||
         (reCache[stackedTag] = new RegExp(
           '([\\s\\S]{0,' +
             MAX_TAG_CONTENT_LENGTH +
-            '?})(</' +
+            '}?)(</' +
             stackedTag +
-            '\\s*>)', // 限制最大长度+非贪婪匹配
+            '\\s*[>]|$)', // 添加$匹配防止无限匹配
           'i'
         ))
       const rest = html.replace(reStackedTag, function (all, text, endTag) {
@@ -208,11 +237,11 @@ export function parseHTML(html, options: HTMLParserOptions) {
         if (options.chars) {
           options.chars(text)
         }
-        return ''
+        return endTag || ''
       })
       index += html.length - rest.length
       html = rest
-      // 【修复4：无匹配结束符时，主动清理栈，避免无限循环】
+      // 【修复9】无匹配结束符时，主动清理栈，避免无限循环
       if (endTagLength === 0 && __DEV__ && options.warn) {
         options.warn(`Unclosed <${stackedTag}> tag, potential ReDoS attack`, {
           start: index - html.length,
@@ -254,14 +283,20 @@ export function parseHTML(html, options: HTMLParserOptions) {
       }
       advance(start[0].length)
       let end, attr
+      // 【修复10】添加属性解析数量限制
+      let attrCount = 0
+      const MAX_ATTR_COUNT = 100
+
       while (
         !(end = html.match(startTagClose)) &&
-        (attr = html.match(dynamicArgAttribute) || html.match(attribute))
+        (attr = html.match(dynamicArgAttribute) || html.match(attribute)) &&
+        attrCount < MAX_ATTR_COUNT
       ) {
         attr.start = index
         advance(attr[0].length)
         attr.end = index
         match.attrs.push(attr)
+        attrCount++
       }
       if (end) {
         match.unarySlash = end[1]
