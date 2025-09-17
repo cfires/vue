@@ -135,7 +135,7 @@ export function compileScript(
 
   if (!scriptSetup) {
     if (!script) {
-      throw new Error(`[@vue/compiler-sfc] SFC contains no <script> tags.`)
+      throw new Error(`[@jnslkj/compiler-sfc] SFC contains no <script> tags.`)
     }
     if (scriptLang && !isTS && scriptLang !== 'jsx') {
       // do not process non js/ts script blocks

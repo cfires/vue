@@ -1,1 +1,1 @@
-export * from '@vue/compiler-sfc'
+export * from '@jnslkj/compiler-sfc'

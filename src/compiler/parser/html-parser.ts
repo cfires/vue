@@ -39,9 +39,9 @@ export const isPlainTextElement = makeMap('script,style,textarea', true)
 const reCache = {}
 
 // 【修复3】新增安全限制参数
-const MAX_TAG_CONTENT_LENGTH = 10000  // 标签内容最大长度限制
-const MAX_ATTR_VALUE_LENGTH = 1000    // 属性值最大长度限制
-const MAX_PARSING_TIME = 5000         // 最大解析时间(ms)
+const MAX_TAG_CONTENT_LENGTH = 50000 // 标签内容最大长度限制
+const MAX_ATTR_VALUE_LENGTH = 1000 // 属性值最大长度限制
+const MAX_PARSING_TIME = 50000 // 最大解析时间(ms)
 
 const decodingMap = {
   '&lt;': '<',
@@ -92,10 +92,23 @@ export function parseHTML(html, options: HTMLParserOptions) {
 
   // 【修复5】添加解析超时检测
   const startTime = Date.now()
+  let timeoutWarningShown = false
+
   const checkTimeout = () => {
-    if (Date.now() - startTime > MAX_PARSING_TIME) {
-      throw new Error(`HTML parsing exceeded time limit of ${MAX_PARSING_TIME}ms`)
+    const elapsed = Date.now() - startTime
+    if (elapsed > MAX_PARSING_TIME && !timeoutWarningShown) {
+      timeoutWarningShown = true
+      if (__DEV__ && options.warn) {
+        options.warn(
+          `HTML parsing taking longer than expected (${elapsed}ms)`,
+          {
+            start: index,
+            end: index + html.length
+          }
+        )
+      }
     }
+    return elapsed > MAX_PARSING_TIME * 2 // 只有严重超时才抛出错误
   }
 
   while (html) {

@@ -1,6 +1,6 @@
 {
   "name": "@jnslkj/vue-template-compiler",
-  "version": "2.7.17",
+  "version": "2.7.18",
   "description": "template compiler for Vue 2.0",
   "main": "index.js",
   "unpkg": "browser.js",
